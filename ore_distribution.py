@@ -4,21 +4,27 @@
 # sudo apt-get install python-{matplotlib,progressbar}
 # ln -s /PATH/TO/pymclevel /PATH/TO/THIS/SCRIPT
 
+# http://nemesis.evalq.net/RedPower2/ore_dist/
 
 import sys
 import os
 import subprocess
 import os.path as osp
 import matplotlib.pyplot as plt
-from progressbar import ProgressBar, Percentage, Bar, ETA
-from datetime import datetime
+import progressbar
+import argparse
 import numpy
 import time
 import logging
-logging.basicConfig(level=logging.DEBUG)
-from pymclevel import mclevel
+from datetime import datetime
+from xdg.BaseDirectory import xdg_cache_home
 
-def openfile(filename):
+workdir = osp.join(xdg_cache_home, 'minecraft')
+if not osp.exists(workdir):
+    os.makedirs(workdir)
+
+
+def launchfile(filename):
     if sys.platform.startswith('darwin'):
         subprocess.call(('open', filename))
     elif os.name == 'nt':  # works for sys.platform 'win32' and 'cygwin'
@@ -27,83 +33,168 @@ def openfile(filename):
         subprocess.call(('xdg-open', filename))
 
 
-def ore_name(ore):
-    return world.materials[ore].name.replace(' Ore', '')
+def main(args):
+    from pymclevel import mclevel
+
+    def openworld(name):
+        if osp.isfile(name):
+            return mclevel.fromFile(name, readonly=True)
+        else:
+            return mclevel.loadWorld(name)
+
+    def ore_name(ore):
+        return "%3d %s" % (ore, world.materials[ore].name.replace(' Ore', ''))
+
+    def ore_color(ore):
+        if ore in ores:
+            return ores[ore]['color']
+        else:
+            return world.materials[ore].color/255.0
+
+    world = openworld(args.world)
+    MAXHEIGHT = args.maxy or world.Height
+    MAXBLOCKS = 256
+    maxy = args.maxy + 1
+
+    ores = {
+         0: dict(color='blue'),      # Air
+         1: dict(color='gray'),      # Stone
+         7: dict(color='black'),     # Bedrock
+        10: dict(color='yellow'),    # Lava
+        14: dict(color='gold'),      # Gold
+        15: dict(color='orange'),    # Iron
+        16: dict(color='darkgray'),  # Coal
+        21: dict(color='blue'),      # Lapis
+        56: dict(color='cyan'),      # Diamond
+        73: dict(color='red'),       # Redstone
+       129: dict(color='green')      # Emerald
+    }
 
 
-# Progress bar style
-widgets = [' ', Percentage(), ' ', Bar(marker='.'), ' ', ETA(), ' ']
+    includes = []
+    excludes = []
 
-## Magic numbers
-#CHUNK_HEIGHT = 35
-BLOCK_ID = {
-     0: ["Air",      'blue'],
-     1: ["Stone",    'gray'],
-     7: ["Bedrock",  'black'],
-    10: ["Lava",    'yellow'],
-    11: ["Still Lava", 'red'],
-    14: ["Gold",     'gold'],
-    15: ["Iron",     'orange'],
-    16: ["Coal",     'darkgray'],
-    21: ["Lapis",    'blue'],
-    56: ["Diamond",  'cyan'],
-    73: ["Redstone", 'red'],
-}
+    start = time.clock()
 
-start = time.clock()
+    log.info("Reading '%s' (%s)", world.LevelName, world.filename)
 
-## Open world:
-try:
-    levelfile = osp.expanduser('~/.minecraft/saves/%s/level.dat' % ("".join(sys.argv[1:2]) or 'Brave'))
-    world = mclevel.fromFile(levelfile, readonly=True)
-    outfilename = osp.expanduser('~/minecraft-%s_%s.svg' % (osp.basename(osp.dirname(levelfile)), datetime.now()))
-    CHUNK_HEIGHT = int("".join(sys.argv[2:3]) or 50 or world.Height-1) + 1
-except:
-    raise
-    print "usage: "+sys.argv[0]+" path/to/level.dat out-graph.png"
-    sys.exit(-1)
+    chunk_count = world.chunkCount
 
-print "Reading %s" % levelfile
+    dist = numpy.zeros((MAXBLOCKS, MAXHEIGHT))
+    sums = numpy.zeros(MAXBLOCKS)
+    pbar = progressbar.ProgressBar(widgets=[' ', progressbar.Percentage(),
+                                            ' Chunk ', progressbar.SimpleProgress(),
+                                            ' ', progressbar.Bar('.'),
+                                            ' ', progressbar.ETA(), ' '],
+                                   maxval=chunk_count).start()
 
-## Initialize
-ore_list = BLOCK_ID.keys()  # range(256)
-ore_sums = {}
-for ore in ore_list:
-    ore_sums[ore] = numpy.zeros(CHUNK_HEIGHT)
-chunk_max = world.chunkCount
-chunk_count = 0
+    for cx, cz in world.allChunks:
+        chunk = world.getChunk(cx, cz)
+        for y in xrange(MAXHEIGHT):
+            dist[:, y] += numpy.bincount(chunk.Blocks[:, :, y].ravel(),
+                                             minlength=MAXBLOCKS)
+        pbar.update(pbar.currval+1)
+    pbar.finish()
 
-## Iterate over all blocks:
-print "Overworld contains %d chunks. Analyzing ores..." % chunk_max
-pbar = ProgressBar(widgets=widgets, maxval=chunk_max).start()
+    # Merge blocks like Still/Active Lava, Glowing/Normal Redstone Ore, etc
+    for i, j in [[8, 9], [10, 11], [74, 73]]:  # also perhaps [75, 76], [93, 94], [123, 124] [149, 150]
+        dist[j] += dist[i]
+        dist[i] -= dist[i]
+
+    # small "hack" for tall grass name
+    world.materials[(31,0)].name = world.materials[(31,1)].name
+
+    # Normalize per chunk
+    ore_norm = dist / float(chunk_count)
+    log.info("Total per chunk and Grand Total:")
+    for ore in xrange(MAXBLOCKS):
+        sums[ore] = dist[ore].sum()
+        if sums[ore] > 0:
+            log.info("%-20s\t%8.2f\t%9d", ore_name(ore),
+                                          sums[ore] / float(chunk_count),
+                                          sums[ore])
+
+    sums_norm = sums / float(chunk_count)
+
+    log.info("Elapsed: %.2f seconds", time.clock()-start)
+
+    ## Create plot:
+    #outfile = osp.join(workdir, '%s-%s_%s.svg' % (myname, world.LevelName, datetime.now()))
+    #print "Saving plot to '%s'" % outfile
+    for ore in xrange(MAXBLOCKS):
+        if ore in includes or sums[ore] > 0 and ore not in excludes:
+            plt.plot(ore_norm[ore], label=ore_name(ore),
+                     color=ore_color(ore), linewidth=2 if ore in ores else 1)
+    plt.legend()
+    plt.xlabel('Layer')
+    plt.ylabel('Blocks per chunk')
+    if args.semilog:
+        plt.semilogy()
+    plt.grid()
+    plt.show()
+    #plt.savefig(outfile, dpi=120)
+    #openfile(outfile)
 
 
-for cx, cz in world.allChunks:
-    chunk = world.getChunk(cx, cz)
-    chunk_count += 1
-    for ore in ore_list:
-        ore_sums[ore] += (chunk.Blocks[:, :, :CHUNK_HEIGHT] == ore).sum(0).sum(0)
-    pbar.update(chunk_count)
+def setuplogging(level='INFO'):
+    log = logging.getLogger()
+    log.setLevel(level)
+    sh = logging.StreamHandler()
+    sh.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    #sh.setLevel(level)
+    log.addHandler(sh)
+    try:
+        fh = logging.FileHandler(osp.join(workdir, "%s.log" % myname))
+        fh.setFormatter(logging.Formatter('%(asctime)s\t%(levelname)s\t%(message)s'))
+        log.addHandler(fh)
+    except IOError as e:  # Probably access denied
+        log.warn("%s\nLogging will not work.", e)
+    return log
 
-# finish progress
-pbar.finish()
 
-print "Totals per chunk:"
-for ore in ore_list:
-    ore_sums[ore] /= float(chunk_count)  # Normalize
-    print " - %-20s\t%8.2f" % (ore_name(ore), ore_sums[ore].sum())
+def parseargs(args=None):
+    parser = argparse.ArgumentParser(
+        description="Plot ore distribution of Minecraft worlds.",)
 
-print "Elapsed: %.2f seconds" % (time.clock()-start)
+    loglevels = ['debug', 'info', 'warn', 'error', 'critical']
+    logdefault = 'info'
+    parser.add_argument('--loglevel', '-l', dest='loglevel',
+                        default=logdefault, choices=loglevels,
+                        help="set verbosity level. [default: '%s']" % logdefault)
 
-## Create plot:
-#print "Saving plot to '%s'" % outfilename
-for ore in ore_list:
-    plt.plot(ore_sums[ore], label=ore_name(ore), color=world.materials[ore].color/255.0)
-plt.legend()
-plt.xlabel('Layer')
-plt.ylabel('Blocks per chunk')
-plt.yscale('log')
-plt.grid()
-plt.show()
-#plt.savefig(outfilename, dpi=120)
-#openfile(outfilename)
+    parser.add_argument('--semilog', '-s', dest='semilog',
+                        default=False,
+                        action='store_true',
+                        help='plots a semi-log graph instead of a linear one.')
+
+    parser.add_argument('--maxy', '-y', dest='maxy',
+                        default=70,
+                        type=int,
+                        help="Y (layer/height) upper bound. This only affects plotting,"
+                        " as the world's full height will be read for caching purposes."
+                        "  [default: 70]")
+
+    parser.add_argument(dest='world',
+                        default="Brave", nargs="?",  # @@
+                        help="Minecraft world, either its 'level.dat' file"
+                        " or a name under '~/.minecraft/saves' folder")
+
+    return parser.parse_args(args)
+
+
+if __name__ != '__main__':
+    myname = __name__
+    log = logging.getLogger(myname)
+    log.addHandler(logging.NullHandler())
+
+else:
+    myname = osp.basename(osp.splitext(__file__)[0])
+    args = parseargs()
+    log = setuplogging(args.loglevel.upper())
+    try:
+        sys.exit(main(args))
+    except Exception as e:
+        log.critical(e, exc_info=True)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        pass
