@@ -116,7 +116,9 @@ def main(args):
     includes = []
     excludes = []
 
-    if osp.isfile(datacache):
+    if args.rebuild_cache or not osp.isfile(datacache):
+        chunk_count, dist = readworld(world)
+    else:
         log.info("Reading '%s' data from cache '%s'", world.LevelName, datacache)
         try:
             with open(datacache, 'r') as f:
@@ -129,8 +131,6 @@ def main(args):
                 chunk_count, dist = readworld(world)
         except Exception:
             chunk_count, dist = readworld(world)
-    else:
-        chunk_count, dist = readworld(world)
 
     # Merge blocks like Still/Active Lava, Glowing/Normal Redstone Ore, etc
     for i, j in [[8, 9], [10, 11], [74, 73]]:  # also perhaps [75, 76], [93, 94], [123, 124] [149, 150]
@@ -147,10 +147,10 @@ def main(args):
     htmldata = {}
     sums = numpy.zeros(MAXBLOCKS)
     sums_norm = numpy.zeros(MAXBLOCKS)
-    log.info("Total per chunk and Grand Total:")
+    log.info("Total per chunk and Grand Total out of %d chunks:" % chunk_count)
     for ore in xrange(MAXBLOCKS):
         sums[ore] = dist[ore, :maxy].sum()
-        sums_norm[ore] = sums[ore] / float(chunk_count)
+        sums_norm[ore] = dist_norm[ore, :maxy].sum()
         if sums[ore] > 0:
             htmldata[ore] = dict(active=ore in ores,
                                  sum=sums_norm[ore],
@@ -220,11 +220,11 @@ def parseargs(args=None):
                         help='force rebuild of block data cache.')
 
     parser.add_argument('--maxy', '-y', dest='maxy',
-                        default=70,
+                        default=130,
                         type=int,
                         help="Y (layer/height) upper bound. This only affects plotting,"
                         " as the world's full height will be read for caching purposes."
-                        "  [default: 70]")
+                        "  [default: 130]")
 
     #TODO: add all of --{min,max}{y,x,z}
 

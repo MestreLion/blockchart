@@ -2,17 +2,24 @@ template = """
 <html>
     <head>
         <title>MC Ore Distribution Chart</title>
+        <link href="http://raw.github.com/flot/flot/master/examples/examples.css" rel="stylesheet" type="text/css">
         <script language="javascript" type="text/javascript" src="http://raw.github.com/flot/flot/master/jquery.js"></script>
         <script language="javascript" type="text/javascript" src="http://raw.github.com/flot/flot/master/jquery.flot.js"></script>
+        <script language="javascript" type="text/javascript" src="http://raw.github.com/flot/flot/master/jquery.flot.navigate.js"></script>
     </head>
     <body>
     <h1>Block Distribution per Chunk by Height</h1>
 
-    <div id="placeholder" style="width:66%;height:800px;float:left;"></div>
+    <div id="placeholder" style="width:66%;height:80%;float:left;"></div>
 
     <div id="choices" style="width:33%; columns:2; -moz-columns:2; float:right;">Show:</div>
-    <br>
-    <div id="footer">Yet another minecraft analyzer.<br>&copy;2012 TR. Uses NBT and flot.</div>
+    <p/>
+    <div id="footer">
+        Yet another minecraft analyzer. Uses <a href="http://www.flotcharts.org">flot</a><br>
+        Click and drag to pan, double-click or mousewheel to zoom.<br>
+        Copyright &copy;2013 MestreLion.
+    </div>
+
     <script type="text/javascript">
     $(function () {
         var datasets = {};
@@ -48,7 +55,30 @@ template = """
             if (data.length > 0)
                 $.plot($("#placeholder"), data, {
                     grid: { hoverable: true },
-                    series: { lines: { steps: true}},
+                    series: {
+                        points: {
+                            show: true
+                        },
+                        lines: {
+                            show: true,
+                        },
+                    },
+                    xaxis: {
+                        tickDecimals: 0,
+                        zoomRange: [0.01, 100],
+                        panRange: [0, 300]
+                    },
+                    yaxis: {
+                        zoomRange: [0.01, 100],
+                        panRange: [0, 300]
+                    },
+                    zoom: {
+                        interactive: true
+                    },
+                    pan: {
+                        interactive: true
+                    }
+/*
                     yaxis: {
                         transform: function (v) { return Math.log(v+1); },
                         inverseTransform: function (v) { return Math.exp(v)-1; },
@@ -62,20 +92,8 @@ template = """
 
                             return res;
                         }
-                    }, xaxis: {
-                        ticks: function tick50(axis) {
-                            var res = [], i = 0;
-                            do {
-                                res.push(i);
-                                i++;
-                                if (axis.max >  35) i++;
-                                if (axis.max >  70) i++;
-                                if (axis.max > 120) i+=2;
-                            } while (i <= axis.max);
-
-                            return res;
-                        }
-                    }
+                    },
+*/
                 });
         }
 
