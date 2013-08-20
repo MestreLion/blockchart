@@ -56,7 +56,7 @@ def cachefile(filename):
     return osp.join(workdir, "%s_%s" % (myname, filename))
 
 def main(args):
-    from pymclevel import mclevel
+    from pymclevel import mclevel, box
 
     def openworld(name):
         if osp.isfile(name):
@@ -79,42 +79,62 @@ def main(args):
         log.info("Extracting '%s' block data from '%s'",
                  world.LevelName, world.filename)
         start = time.clock()
-        chunk_count = world.chunkCount
+        if args.maxx == args.minx == args.maxz == args.minz == None:
+            chunk_max = world.chunkCount
+            chunk_range = world.allChunks
+        else:
+
+            maxx = world.bounds.maxx if args.maxx is None else args.maxx
+            minx = world.bounds.minx if args.minx is None else args.minx
+            maxz = world.bounds.maxz if args.maxz is None else args.maxz
+            minz = world.bounds.minz if args.minz is None else args.minz
+            bounds = box.BoundingBox((minx, 0, minz),
+                                     (maxx-minx+1, world.Height, maxz-minz+1))
+            chunk_max = bounds.chunkCount
+            chunk_range = bounds.chunkPositions
+
         pbar = progressbar.ProgressBar(widgets=[' ', progressbar.Percentage(),
                                                 ' Chunk ', progressbar.SimpleProgress(),
                                                 ' ', progressbar.Bar('.'),
                                                 ' ', progressbar.ETA(), ' '],
-                                       maxval=chunk_count).start()
-        dist = numpy.zeros((MAXBLOCKS, MAXHEIGHT))
-        for cx, cz in world.allChunks:
-            chunk = world.getChunk(cx, cz)
-            for y in xrange(MAXHEIGHT):
-                dist[:, y] += numpy.bincount(chunk.Blocks[:, :, y].ravel(),
-                                             minlength=MAXBLOCKS)
+                                       maxval=chunk_max).start()
+
+        chunk_count = 0
+        dist = numpy.zeros((MAXBLOCKS, MAXHEIGHT), dtype='uint32')
+        for cx, cz in chunk_range:
+            if world.containsChunk(cx, cz):
+                chunk = world.getChunk(cx, cz)
+                chunk_count += 1
+                for y in xrange(MAXHEIGHT):
+                    dist[:, y] += numpy.bincount(chunk.Blocks[:, :, y].ravel(),
+                                                 minlength=MAXBLOCKS)
             pbar.update(pbar.currval+1)
         pbar.finish()
-        log.info("Data from %d chunks extracted in %.2f seconds",
-                 chunk_count, time.clock()-start)
+        log.info("Data from %d chunks%s extracted in %.2f seconds",
+                 chunk_count,
+                 (" (out of %d requested)" %  chunk_max) if chunk_max > chunk_count else "",
+                 time.clock()-start)
 
         # save data
-        log.info("Saving block data to cache file '%s'", datacache)
-        data = dict(LevelName=world.LevelName,
-                    filename=world.filename,
-                    LastPlayed=world.LastPlayed,
-                    chunk_count=chunk_count,
-                    dist=dist.tolist(),)
-        with open(datacache, 'w') as f:
-            json.dump(data, f, indent=0, separators=(',', ':'))
+        if args.cache:
+            log.info("Saving block data to cache file '%s'", datacache)
+            data = dict(LevelName=world.LevelName,
+                        filename=world.filename,
+                        LastPlayed=world.LastPlayed,
+                        chunk_count=chunk_count,
+                        dist=dist.tolist(),)
+            with open(datacache, 'w') as f:
+                json.dump(data, f, indent=0, separators=(',', ':'))
 
         return chunk_count, dist
 
     # open world and set constants
     world = openworld(args.world)
-    datacache = cachefile("%s.json" % hashlib.md5(world.filename).hexdigest())
+    datacache = cachefile("%s.json" % hashlib.md5(world.filename +
+                                                  str(world.LastPlayed)).hexdigest())
     htmlchart = cachefile("%s.html" % world.LevelName)
     imgchart  = cachefile("%s_%s.svg" % (world.LevelName, datetime.now()))
 
-    maxy = args.maxy + 1
     MAXHEIGHT = world.Height  # world max y-layer + 1
     MAXBLOCKS = 256           # world max block ID + 1
 
@@ -135,21 +155,20 @@ def main(args):
     includes = []
     excludes = []
 
-    if args.rebuild_cache or not osp.isfile(datacache):
+    if args.rebuild_cache or not args.cache or not osp.isfile(datacache):
         chunk_count, dist = readworld(world)
     else:
         log.info("Reading '%s' data from cache '%s'", world.LevelName, datacache)
         try:
             with open(datacache, 'r') as f:
                 data = json.load(f)
-            if data['LastPlayed'] == world.LastPlayed:
                 chunk_count = data['chunk_count']
                 dist = numpy.asarray(data['dist'])
-            else:
-                log.warn("Cache is outdated, discarding.")
-                chunk_count, dist = readworld(world)
         except Exception:
             chunk_count, dist = readworld(world)
+    if chunk_count == 0:
+        log.warn("No chunks to read, aborting")
+        return
 
     # Merge blocks like Still/Active Lava, Glowing/Normal Redstone Ore, etc
     for i, j in [[8, 9], [10, 11], [74, 73]]:  # also perhaps [75, 76], [93, 94], [123, 124] [149, 150]
@@ -163,8 +182,9 @@ def main(args):
     dist_norm = dist / float(chunk_count)
 
     # calculate all derived data
+    maxy = args.maxy + 1
     htmldata = {}
-    sums = numpy.zeros(MAXBLOCKS)
+    sums = numpy.zeros(MAXBLOCKS, dtype=int)
     sums_norm = numpy.zeros(MAXBLOCKS)
     log.info("Total per chunk and Grand Total out of %d chunks:" % chunk_count)
     for ore in xrange(MAXBLOCKS):
@@ -201,7 +221,7 @@ def main(args):
         plt.semilogy()
     plt.grid()
     #plt.show()
-    #plt.savefig(imgchart, dpi=120)
+    plt.savefig(imgchart, dpi=120)
     #launchfile(imgchart)
 
 
@@ -236,6 +256,11 @@ def parseargs(args=None):
                         action='store_true',
                         help='plots a semi-log graph instead of a linear one.')
 
+    parser.add_argument('--no-cache', '-C', dest='cache',
+                        default=True,
+                        action='store_false',
+                        help='do not read or write block data cache.')
+
     parser.add_argument('--rebuild-cache', '-c', dest='rebuild_cache',
                         default=False,
                         action='store_false',
@@ -247,6 +272,15 @@ def parseargs(args=None):
                         help="Y (layer/height) upper bound. This only affects plotting,"
                         " as the world's full height will be read for caching purposes."
                         "  [default: 130]")
+
+    parser.add_argument('--maxx', '-x', dest='maxx', default=None, type=int,
+                        help="X upper bound. Will be extended to chunk boundary")
+    parser.add_argument('--minx', '-X', dest='minx', default=None, type=int,
+                        help="X lower bound. Will be extended to chunk boundary")
+    parser.add_argument('--maxz', '-z', dest='maxz', default=None, type=int,
+                        help="Z upper bound. Will be extended to chunk boundary")
+    parser.add_argument('--minz', '-Z', dest='minz', default=None, type=int,
+                        help="Z lower bound. Will be extended to chunk boundary")
 
     #TODO: add all of --{min,max}{y,x,z}
 

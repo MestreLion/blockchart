@@ -12,7 +12,7 @@ template = """
 
     <div id="placeholder" style="width:66%;height:80%;float:left;"></div>
 
-    <div id="choices" style="width:33%; columns:2; -moz-columns:2; float:right;"></div>
+    <div id="choices" style="width:33%; columns:2; -moz-columns:2; float:right;">Show:</div>
     <p/>
     <div id="footer">
         Yet another minecraft analyzer. Uses <a href="http://www.flotcharts.org">flot</a><br>
