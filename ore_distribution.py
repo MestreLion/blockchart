@@ -16,6 +16,9 @@ import argparse
 import numpy
 import time
 import logging
+import json
+import hashlib
+import pprint
 from datetime import datetime
 from xdg.BaseDirectory import xdg_cache_home
 
@@ -51,10 +54,42 @@ def main(args):
         else:
             return world.materials[ore].color/255.0
 
+    def readworld(world):
+        log.info("Extracting '%s' block data from '%s'",
+                 world.LevelName, world.filename)
+        start = time.clock()
+        chunk_count = world.chunkCount
+        pbar = progressbar.ProgressBar(widgets=[' ', progressbar.Percentage(),
+                                                ' Chunk ', progressbar.SimpleProgress(),
+                                                ' ', progressbar.Bar('.'),
+                                                ' ', progressbar.ETA(), ' '],
+                                       maxval=chunk_count).start()
+        dist = numpy.zeros((MAXBLOCKS, MAXHEIGHT))
+        for cx, cz in world.allChunks:
+            chunk = world.getChunk(cx, cz)
+            for y in xrange(MAXHEIGHT):
+                dist[:, y] += numpy.bincount(chunk.Blocks[:, :, y].ravel(),
+                                             minlength=MAXBLOCKS)
+            pbar.update(pbar.currval+1)
+        pbar.finish()
+        log.info("Data from %d chunks extracted in %.2f seconds",
+                 chunk_count, time.clock()-start)
+        log.info("Saving block data to cache file '%s'", datacache)
+        data = dict(LevelName=world.LevelName,
+                    filename=world.filename,
+                    LastPlayed=world.LastPlayed,
+                    chunk_count=chunk_count,
+                    dist=dist.tolist(),)
+        with open(datacache, 'w') as f:
+            json.dump(data, f, indent=0, separators=(',', ':'))
+        return chunk_count, dist
+
     world = openworld(args.world)
-    MAXHEIGHT = args.maxy or world.Height
-    MAXBLOCKS = 256
+    datacache = osp.join(workdir, "%s_%s.json" %
+                         (myname, hashlib.md5(world.filename).hexdigest()))
     maxy = args.maxy + 1
+    MAXHEIGHT = world.Height
+    MAXBLOCKS = 256
 
     ores = {
          0: dict(color='blue'),      # Air
@@ -74,27 +109,22 @@ def main(args):
     includes = []
     excludes = []
 
-    start = time.clock()
 
-    log.info("Reading '%s' (%s)", world.LevelName, world.filename)
-
-    chunk_count = world.chunkCount
-
-    dist = numpy.zeros((MAXBLOCKS, MAXHEIGHT))
-    sums = numpy.zeros(MAXBLOCKS)
-    pbar = progressbar.ProgressBar(widgets=[' ', progressbar.Percentage(),
-                                            ' Chunk ', progressbar.SimpleProgress(),
-                                            ' ', progressbar.Bar('.'),
-                                            ' ', progressbar.ETA(), ' '],
-                                   maxval=chunk_count).start()
-
-    for cx, cz in world.allChunks:
-        chunk = world.getChunk(cx, cz)
-        for y in xrange(MAXHEIGHT):
-            dist[:, y] += numpy.bincount(chunk.Blocks[:, :, y].ravel(),
-                                             minlength=MAXBLOCKS)
-        pbar.update(pbar.currval+1)
-    pbar.finish()
+    if osp.isfile(datacache):
+        log.info("Reading '%s' data from cache '%s'", world.LevelName, datacache)
+        try:
+            with open(datacache, 'r') as f:
+                data = json.load(f)
+            if data['LastPlayed'] == world.LastPlayed:
+                chunk_count = data['chunk_count']
+                dist = numpy.asarray(data['dist'])
+            else:
+                log.warn("Cache is outdated, discarding.")
+                chunk_count, dist = readworld(world)
+        except Exception:
+            chunk_count, dist = readworld(world)
+    else:
+        chunk_count, dist = readworld(world)
 
     # Merge blocks like Still/Active Lava, Glowing/Normal Redstone Ore, etc
     for i, j in [[8, 9], [10, 11], [74, 73]]:  # also perhaps [75, 76], [93, 94], [123, 124] [149, 150]
@@ -105,10 +135,11 @@ def main(args):
     world.materials[(31,0)].name = world.materials[(31,1)].name
 
     # Normalize per chunk
+    sums = numpy.zeros(MAXBLOCKS)
     ore_norm = dist / float(chunk_count)
     log.info("Total per chunk and Grand Total:")
     for ore in xrange(MAXBLOCKS):
-        sums[ore] = dist[ore].sum()
+        sums[ore] = dist[ore, :maxy].sum()
         if sums[ore] > 0:
             log.info("%-20s\t%8.2f\t%9d", ore_name(ore),
                                           sums[ore] / float(chunk_count),
@@ -116,14 +147,13 @@ def main(args):
 
     sums_norm = sums / float(chunk_count)
 
-    log.info("Elapsed: %.2f seconds", time.clock()-start)
 
     ## Create plot:
     #outfile = osp.join(workdir, '%s-%s_%s.svg' % (myname, world.LevelName, datetime.now()))
     #print "Saving plot to '%s'" % outfile
     for ore in xrange(MAXBLOCKS):
         if ore in includes or sums[ore] > 0 and ore not in excludes:
-            plt.plot(ore_norm[ore], label=ore_name(ore),
+            plt.plot(ore_norm[ore, :maxy], label=ore_name(ore),
                      color=ore_color(ore), linewidth=2 if ore in ores else 1)
     plt.legend()
     plt.xlabel('Layer')
