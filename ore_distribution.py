@@ -163,8 +163,11 @@ def main(args):
 
     # create and open html chart
     with open(htmlchart, 'w') as f:
-        f.write(template.replace('var datasets = {};', 'var datasets = %s;' %
-                                 json.dumps(htmldata)))
+        htmltemp = template.replace('var chunks = 0;',
+                                    'var chunks = %d;' % chunk_count)
+        htmltemp = htmltemp.replace('var datasets = {};',
+                                    'var datasets = %s;' % json.dumps(htmldata))
+        f.write(htmltemp)
     launchfile(htmlchart)
 
     # create and open img plot
