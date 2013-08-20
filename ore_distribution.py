@@ -18,13 +18,11 @@ import time
 import logging
 import json
 import hashlib
-import pprint
+import re
 from datetime import datetime
 from xdg.BaseDirectory import xdg_cache_home
 
-workdir = osp.join(xdg_cache_home, 'minecraft')
-if not osp.exists(workdir):
-    os.makedirs(workdir)
+from template import template
 
 
 def launchfile(filename):
@@ -35,6 +33,8 @@ def launchfile(filename):
     else:  # Assume POSIX (Linux, BSD, etc)
         subprocess.call(('xdg-open', filename))
 
+def cachefile(filename):
+    return osp.join(workdir, "%s_%s" % (myname, filename))
 
 def main(args):
     from pymclevel import mclevel
@@ -46,7 +46,8 @@ def main(args):
             return mclevel.loadWorld(name)
 
     def ore_name(ore):
-        return "%3d %s" % (ore, world.materials[ore].name.replace(' Ore', ''))
+        return "%3d %s" % (ore, re.sub(' \(.+\)$', '',
+                                       world.materials[ore].name.replace(' Ore', '')))
 
     def ore_color(ore):
         if ore in ores:
@@ -55,6 +56,7 @@ def main(args):
             return world.materials[ore].color/255.0
 
     def readworld(world):
+        # extract data
         log.info("Extracting '%s' block data from '%s'",
                  world.LevelName, world.filename)
         start = time.clock()
@@ -74,6 +76,8 @@ def main(args):
         pbar.finish()
         log.info("Data from %d chunks extracted in %.2f seconds",
                  chunk_count, time.clock()-start)
+
+        # save data
         log.info("Saving block data to cache file '%s'", datacache)
         data = dict(LevelName=world.LevelName,
                     filename=world.filename,
@@ -82,19 +86,23 @@ def main(args):
                     dist=dist.tolist(),)
         with open(datacache, 'w') as f:
             json.dump(data, f, indent=0, separators=(',', ':'))
+
         return chunk_count, dist
 
+    # open world and set constants
     world = openworld(args.world)
-    datacache = osp.join(workdir, "%s_%s.json" %
-                         (myname, hashlib.md5(world.filename).hexdigest()))
+    datacache = cachefile("%s.json" % hashlib.md5(world.filename).hexdigest())
+    htmlchart = cachefile("%s.html" % world.LevelName)
+    imgchart  = cachefile("%s_%s.svg" % (world.LevelName, datetime.now()))
+
     maxy = args.maxy + 1
-    MAXHEIGHT = world.Height
-    MAXBLOCKS = 256
+    MAXHEIGHT = world.Height  # world max y-layer + 1
+    MAXBLOCKS = 256           # world max block ID + 1
 
     ores = {
-         0: dict(color='blue'),      # Air
-         1: dict(color='gray'),      # Stone
-         7: dict(color='black'),     # Bedrock
+#         0: dict(color='blue'),      # Air
+#         1: dict(color='gray'),      # Stone
+#         7: dict(color='black'),     # Bedrock
         10: dict(color='yellow'),    # Lava
         14: dict(color='gold'),      # Gold
         15: dict(color='orange'),    # Iron
@@ -105,10 +113,8 @@ def main(args):
        129: dict(color='green')      # Emerald
     }
 
-
     includes = []
     excludes = []
-
 
     if osp.isfile(datacache):
         log.info("Reading '%s' data from cache '%s'", world.LevelName, datacache)
@@ -135,25 +141,36 @@ def main(args):
     world.materials[(31,0)].name = world.materials[(31,1)].name
 
     # Normalize per chunk
+    dist_norm = dist / float(chunk_count)
+
+    # calculate all derived data
+    htmldata = {}
     sums = numpy.zeros(MAXBLOCKS)
-    ore_norm = dist / float(chunk_count)
+    sums_norm = numpy.zeros(MAXBLOCKS)
     log.info("Total per chunk and Grand Total:")
     for ore in xrange(MAXBLOCKS):
         sums[ore] = dist[ore, :maxy].sum()
+        sums_norm[ore] = sums[ore] / float(chunk_count)
         if sums[ore] > 0:
+            htmldata[ore] = dict(active=ore in ores,
+                                 sum=sums_norm[ore],
+                                 label=ore_name(ore),
+                                 data=zip(xrange(maxy), dist_norm[ore])
+                                 )
             log.info("%-20s\t%8.2f\t%9d", ore_name(ore),
-                                          sums[ore] / float(chunk_count),
+                                          sums_norm[ore],
                                           sums[ore])
 
-    sums_norm = sums / float(chunk_count)
+    # create and open html chart
+    with open(htmlchart, 'w') as f:
+        f.write(template.replace('var datasets = {};', 'var datasets = %s;' %
+                                 json.dumps(htmldata)))
+    launchfile(htmlchart)
 
-
-    ## Create plot:
-    #outfile = osp.join(workdir, '%s-%s_%s.svg' % (myname, world.LevelName, datetime.now()))
-    #print "Saving plot to '%s'" % outfile
+    # create and open img plot
     for ore in xrange(MAXBLOCKS):
         if ore in includes or sums[ore] > 0 and ore not in excludes:
-            plt.plot(ore_norm[ore, :maxy], label=ore_name(ore),
+            plt.plot(dist_norm[ore, :maxy], label=ore_name(ore),
                      color=ore_color(ore), linewidth=2 if ore in ores else 1)
     plt.legend()
     plt.xlabel('Layer')
@@ -161,9 +178,9 @@ def main(args):
     if args.semilog:
         plt.semilogy()
     plt.grid()
-    plt.show()
-    #plt.savefig(outfile, dpi=120)
-    #openfile(outfile)
+    #plt.show()
+    #plt.savefig(imgchart, dpi=120)
+    #launchfile(imgchart)
 
 
 def setuplogging(level='INFO'):
@@ -197,12 +214,19 @@ def parseargs(args=None):
                         action='store_true',
                         help='plots a semi-log graph instead of a linear one.')
 
+    parser.add_argument('--rebuild-cache', '-c', dest='rebuild_cache',
+                        default=False,
+                        action='store_false',
+                        help='force rebuild of block data cache.')
+
     parser.add_argument('--maxy', '-y', dest='maxy',
                         default=70,
                         type=int,
                         help="Y (layer/height) upper bound. This only affects plotting,"
                         " as the world's full height will be read for caching purposes."
                         "  [default: 70]")
+
+    #TODO: add all of --{min,max}{y,x,z}
 
     parser.add_argument(dest='world',
                         default="Brave", nargs="?",  # @@
@@ -211,6 +235,10 @@ def parseargs(args=None):
 
     return parser.parse_args(args)
 
+
+workdir = osp.join(xdg_cache_home, 'minecraft')
+if not osp.exists(workdir):
+    os.makedirs(workdir)
 
 if __name__ != '__main__':
     myname = __name__
