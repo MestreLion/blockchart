@@ -2,24 +2,15 @@ template = """
 <html>
     <head>
         <title>MC Ore Distribution Chart</title>
-        <link href="http://raw.github.com/flot/flot/master/examples/examples.css" rel="stylesheet" type="text/css">
-        <script language="javascript" type="text/javascript" src="http://raw.github.com/flot/flot/master/jquery.js"></script>
-        <script language="javascript" type="text/javascript" src="http://raw.github.com/flot/flot/master/jquery.flot.js"></script>
-        <script language="javascript" type="text/javascript" src="http://raw.github.com/flot/flot/master/jquery.flot.navigate.js"></script>
-    </head>
-    <body>
-    <h1>Block Distribution per Chunk by Height</h1>
-
-    <div id="placeholder" style="width:66%;height:80%;float:left;"></div>
-
-    <div id="choices" style="width:33%; columns:2; -moz-columns:2; float:right;">Show:</div>
-    <p/>
-    <div id="footer">
-        Yet another minecraft analyzer. Uses <a href="http://www.flotcharts.org">flot</a><br>
-        Click and drag to pan, double-click or mousewheel to zoom.<br>
-        Copyright &copy;2013 MestreLion.
-    </div>
-
+        <meta charset="UTF-8" />
+        <link href="http://www.flotcharts.org/flot/examples/examples.css" rel="stylesheet" type="text/css">
+        <script language="javascript" type="text/javascript" src="http://www.flotcharts.org/flot/jquery.js"></script>
+        <script language="javascript" type="text/javascript" src="http://www.flotcharts.org/flot/jquery.flot.js"></script>
+        <script language="javascript" type="text/javascript" src="http://www.flotcharts.org/flot/jquery.flot.navigate.js"></script>
+        <style type="text/css">
+            input[type=checkbox] { margin: 1px 1px 1px 10px; }
+            body { font: 15px/1.2em "proxima-nova", Helvetica, Arial, sans-serif; }
+        </style>
     <script type="text/javascript">
     $(function () {
         var datasets = {};
@@ -35,10 +26,10 @@ template = """
         // insert checkboxes
         var choiceContainer = $("#choices");
         $.each(datasets, function(key, val) {
-            choiceContainer.append('<br/><input type="checkbox" name="' + key +
+            choiceContainer.append('<input type="checkbox" name="' + key +
                                    '"' + (val.active ? ' checked="checked"' : '') + ' id="id' + key + '">' +
                                    '<label for="id' + key + '">'
-                                    + val.label + '</label>');
+                                    + val.label + '</label><br/>');
         });
         choiceContainer.find("input").click(plotAccordingToChoices);
 
@@ -100,8 +91,23 @@ template = """
                         panRange: [-5, 270]
                     },
                     yaxis: {
+/*
+                        transform: function (v) { return v==0 ? null : Math.log(v); },
+                        inverseTransform: function (v) { return Math.exp(v); },
+                        ticks: function logTicks(axis) {
+                            var res = [], i = 0.0001;
+                            do {
+                                res.push(i);
+                                res.push(i*2.5);
+                                res.push(i*5);
+                                i*=10;
+                            } while (i <= axis.max);
+                            return res;
+                        },
+*/
                         zoomRange: [0.001, 1000],
                         panRange: [-1, 270]
+
                     },
                     zoom: {
                         interactive: true
@@ -109,22 +115,6 @@ template = """
                     pan: {
                         interactive: true
                     }
-/*
-                    yaxis: {
-                        transform: function (v) { return Math.log(v+1); },
-                        inverseTransform: function (v) { return Math.exp(v)-1; },
-                        ticks:   function logTickGenerator(axis) {
-                            var res = [], i = 0.01;
-                            do {
-                                if (i/2>0.01) { res.push(i/2); res.push(i*2.5) };
-                                res.push(i);
-                                i*=10;
-                            } while (i <= axis.max);
-
-                            return res;
-                        }
-                    },
-*/
                 });
         }
 
@@ -132,6 +122,26 @@ template = """
 
     });
     </script>
+    </head>
+    <body>
+
+    <div id="header">
+        <h2>Block Distribution per Chunk by Height</h2>
+    </div>
+
+    <div id="content" style="width: 95%;">
+        <div class="demo-container" style="width:100%; height:75%;">
+            <div id="placeholder" class="demo-placeholder" style="float:left; width:70%; height:100%;"></div>
+            <div id="choices" style="float:right; width:30%; columns:2; -moz-columns:2;"></div>
+        </div>
+        <p>Click and drag to pan, double-click or mousewheel to zoom.</p>
+    </div>
+
+    <div id="footer">
+        Yet another minecraft analyzer. Uses <a href="http://www.flotcharts.org">flot</a><br>
+        Copyright &copy;2013 MestreLion.
+    </div>
+
 
     </body>
 </html>
