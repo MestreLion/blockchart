@@ -263,7 +263,7 @@ def parseargs(args=None):
 
     parser.add_argument('--rebuild-cache', '-c', dest='rebuild_cache',
                         default=False,
-                        action='store_false',
+                        action='store_true',
                         help='force rebuild of block data cache.')
 
     parser.add_argument('--maxy', '-y', dest='maxy',
