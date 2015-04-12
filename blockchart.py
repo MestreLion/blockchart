@@ -285,7 +285,7 @@ def parseargs(args=None):
     #TODO: add all of --{min,max}{y,x,z}
 
     parser.add_argument(dest='world',
-                        default="Brave", nargs="?",  # @@
+#                        default="brave", nargs="?",
                         help="Minecraft world, either its 'level.dat' file"
                         " or a name under '~/.minecraft/saves' folder")
 
